@@ -1,0 +1,36 @@
+# Quick Survey — fast literature survey mode
+# Uses a pipeline: searcher finds papers, chief synthesizes the final report.
+# Best for: getting a quick overview of a research topic.
+
+name: quick_survey
+description: >
+  Fast literature survey. The searcher finds relevant papers and the chief
+  immediately synthesizes a summary report. Best for getting a quick overview
+  of a topic with minimal depth.
+
+orchestration:
+  strategy: pipeline
+  max_rounds: 5
+  sequence:
+    - searcher
+    - chief
+  verbose: true
+
+model_defaults:
+  chief: deepseek-chat
+  searcher: deepseek-chat
+
+agents:
+  - name: chief
+    role: chief
+    model: deepseek-chat
+    tools: []
+    max_iters: 10
+
+  - name: searcher
+    role: searcher
+    model: deepseek-chat
+    tools:
+      - search_arxiv
+      - get_paper_detail
+    max_iters: 10
