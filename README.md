@@ -14,23 +14,38 @@ pip install agentscope httpx pyyaml pydantic python-dotenv
 
 ```bash
 cp .env.example .env
-# 编辑 .env 填入 DeepSeek API Key
+# 编辑 .env 填入 DEEPSEEK_API_KEY=sk-...
 ```
 
 ### 运行
 
 ```bash
-# 快速综述（2 agent）
-python main.py "recent advances in multi-agent LLM systems" --preset quick_survey
+# 使用所有 Agent，自主模式
+python main.py "recent advances in multi-agent LLM systems"
 
-# 完整创意生成（5 agent）
-python main.py "open problems in mechanistic interpretability" --preset idea_generation
+# 指定部分 Agent
+python main.py "open problems in ML" --agents chief,searcher,ideator
+
+# 使用 pipeline 策略
+python main.py "survey RLHF" --strategy pipeline
+
+# 用 YAML 编排配置
+python main.py "review RLHF" --config orchestration.yaml
 ```
 
 ```python
 # 编程调用
 from idea_creator import research
-result = await research("LLM agents for code generation", preset="idea_generation")
+
+# 所有 Agent
+result = await research("LLM agents for code generation")
+
+# 指定 Agent + 策略
+result = await research(
+    "survey RLHF",
+    agent_names=["chief", "searcher", "analyst"],
+    strategy="pipeline",
+)
 ```
 
 ---
@@ -41,15 +56,18 @@ result = await research("LLM agents for code generation", preset="idea_generatio
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Config Layer  — 声明式（YAML + Pydantic）               │
+│  Agent 定义层  — agents/definitions/*.md                │
 │                                                         │
-│  定义: 有几个 Agent、各自用什么 model、配什么 tool、      │
-│        采用什么 orchestration 策略                       │
+│  每个 .md 文件 = 一个 Agent 的完整定义                     │
+│    frontmatter (YAML): name, model, tools, max_iters    │
+│    body (markdown):   system_prompt                     │
+│                                                         │
+│  改 prompt 只需编辑 .md 文件，零代码变更                   │
 ├─────────────────────────────────────────────────────────┤
-│  Agent Layer   — 能力层（Factory + ResearchTeam）        │
+│  Agent 运行时层  — ResearchTeam + team.py                │
 │                                                         │
-│  每个 Agent = v2.0 Agent 实例，独立 model + toolkit +    │
-│  system_prompt。Agent 之间平级，互不感知                   │
+│  加载 .md 定义 → 翻译字符串为对象 → 创建 Agent 实例        │
+│  每个 Agent = v2.0 Agent 实例，独立 model + toolkit       │
 ├─────────────────────────────────────────────────────────┤
 │  Orchestration Layer — 行为层（Strategy Pattern）        │
 │                                                         │
@@ -61,20 +79,50 @@ result = await research("LLM agents for code generation", preset="idea_generatio
 
 ### Agent 角色
 
-| 角色 | 职责 | 工具 | 思考方式 |
-|------|------|------|---------|
-| **Chief** | 理解意图、委派任务、合成报告 | TaskCreate, TaskList | "用户要什么？现在该干什么？信息够了吗？" |
-| **Searcher** | 检索论文 | search_arxiv, get_paper_detail | "怎么构造查询？哪些结果最相关？" |
-| **Analyst** | 单篇深度分析 | get_paper_detail | "这篇论文的方法有什么优点和缺陷？" |
-| **Synthesizer** | 多篇横向综合 | search_arxiv | "这些论文之间有什么关系？哪里还有空白？" |
-| **Ideator** | 生成研究创意 | search_arxiv | "基于这些 gap，有什么值得做的方向？" |
+| Agent | .md 文件 | 工具 | 职责 |
+|-------|---------|------|------|
+| **chief** | chief.md | TaskCreate, TaskList | 理解意图、委派任务、合成报告 |
+| **searcher** | searcher.md | search_arxiv, get_paper_detail | arxiv 论文检索 |
+| **analyst** | analyst.md | get_paper_detail | 单篇论文深度批判分析 |
+| **synthesizer** | synthesizer.md | search_arxiv | 多篇论文横向综合、找空白 |
+| **ideator** | ideator.md | search_arxiv | 生成新颖研究创意 |
+
+### Agent 定义格式
+
+每个 `agents/definitions/*.md` 文件：
+
+```markdown
+---
+name: chief
+model: deepseek-chat
+tools: [TaskCreate, TaskList]
+max_iters: 15
+---
+
+你是一个**首席研究科学家**...
+
+你的工作流程：
+1. 理解用户的研究问题...
+2. 委派给专家，使用格式: DELEGATE TO <name>: ...
+```
+
+frontmatter 字段：
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `name` | ✅ | Agent 标识名，用于委派和 team.get_agent() |
+| `model` | ❌ | 模型名，默认 deepseek-chat |
+| `tools` | ❌ | 工具列表：search_arxiv, get_paper_detail, TaskCreate, TaskList |
+| `max_iters` | ❌ | ReAct 循环最大轮数，默认 15 |
+
+body（frontmatter 之后的 markdown 正文）→ system_prompt。
 
 ### 协作流程
 
 ```
 User: "这个方向有什么 open problems?"
 
-Chief (推理): "拆成 3 步: 搜索→分析→创意生成"
+Chief: "拆成几步: 搜索→分析→创意生成"
   │
   ├─ DELEGATE TO searcher: 搜索近期 survey
   │     └─ Searcher 返回 5 篇论文
@@ -85,7 +133,7 @@ Chief (推理): "拆成 3 步: 搜索→分析→创意生成"
   ├─ DELEGATE TO synthesizer: 横向对比，找 gap
   │     └─ Synthesizer 返回趋势 + 空白点
   │
-  ├─ DELEGATE TO ideator: 基于 gap 生成 3 个 idea
+  ├─ DELEGATE TO ideator: 基于 gap 生成创意
   │     └─ Ideator 返回结构化创意
   │
   └─ Chief 合成最终报告 → 返回给 User
@@ -93,87 +141,82 @@ Chief (推理): "拆成 3 步: 搜索→分析→创意生成"
 
 ### 两种编排策略
 
-**Autonomous（默认）**：Chief 动态决策，根据中间结果自适应调整。可以重复搜索、跳过不必要的步骤、深入感兴趣的方向。`max_rounds` 防止无限循环。
+**Autonomous（默认）**：Chief 动态决策，根据中间结果自适应调整。可重复搜索、跳过步骤、深入感兴趣的方向。`max_rounds` 防止无限循环。
 
-**Pipeline**：固定序列执行，可预测、速度快。适合明确的线性场景（如 `quick_survey`）。
+**Pipeline**：固定序列执行，可预测、速度快。适合明确的线性场景。
 
 ### 委派机制
 
-Chief 通过 LLM 输出文本指令 `DELEGATE TO <agent_name>:` 来委派任务。Orchestration 层的 Router 用正则解析指令，找到对应 Agent 执行，结果反馈给 Chief。
+Chief 输出文本指令 `DELEGATE TO <agent_name>:` 来委派任务。`router.py` 用正则解析，找到对应 Agent 执行，结果反馈给 Chief。
 
 ```
-Chief 输出:  "DELEGATE TO searcher:\nQuery: RLHF survey..."
-                │
-Router 解析:  ("searcher", "Query: RLHF survey...")
-                │
-执行:         searcher.reply(task)
-                │
-结果反馈:     Chief 看到 Searcher 的输出，决定下一步
+Chief 输出:  "DELEGATE TO searcher:\n查询关键词: RLHF survey..."
+Router 解析:  ("searcher", "查询关键词: RLHF survey...")
+执行:         team.get_agent("searcher").reply(task)
+结果反馈:     Chief 看到输出，决定下一步
 ```
-
-### Agent 生命周期
-
-```
-程序启动 → ResearchTeam.__init__()
-            ├─ Agent("chief", ...)       对象创建
-            ├─ Agent("searcher", ...)     常驻内存
-            ├─ Agent("analyst", ...)      等待调用
-            ├─ Agent("synthesizer", ...)
-            └─ Agent("ideator", ...)
-               │
-用户请求 → strategy.execute(team, msg)
-            └─ while 循环: 委派 → 执行 → 反馈 → 委派 → ...
-               │
-响应完成 → 返回最终 Msg，Agent 对象继续常驻
-```
-
-所有 Agent 在启动时一次性创建，运行时通过消息路由协作。没有动态 spawn，没有进程/线程创建。
 
 ---
 
-## 配置
+## 使用指南
 
-### 内置预设
+### CLI
 
-| 预设 | Agent | 策略 | 适用场景 |
-|------|-------|------|---------|
-| `quick_survey` | searcher, chief | pipeline | 快速文献概览 |
-| `idea_generation` | 全部 5 个 | autonomous | 深度分析 + 创意生成 |
+```bash
+python main.py "query"                           # 所有 agent，autonomous
+python main.py "query" --agents chief,searcher   # 指定 agent
+python main.py "query" --strategy pipeline        # pipeline 策略
+python main.py "query" --config orchestration.yaml # 编排 YAML
+python main.py "query" --max-rounds 10 --quiet    # 控制参数
+```
 
-### 自定义 YAML
+### 编程 API
+
+```python
+from idea_creator import research, OrchestrationConfig
+
+# 最简
+result = await research("query")
+
+# 指定 agent
+result = await research("query", agent_names=["chief", "searcher", "ideator"])
+
+# pipeline
+result = await research("query", strategy="pipeline")
+
+# YAML 编排配置
+result = await research("query", config="orchestration.yaml")
+
+# OrchestrationConfig 对象
+cfg = OrchestrationConfig(strategy="pipeline", sequence=["searcher", "chief"])
+result = await research("query", config=cfg)
+```
+
+### 编排 YAML
 
 ```yaml
-name: my_research
-orchestration:
-  strategy: autonomous
-  max_rounds: 15
-
-agents:
-  - name: chief
-    role: chief
-    model: deepseek-chat
-    tools: [TaskCreate, TaskList]
-
-  - name: searcher
-    role: searcher
-    model: deepseek-chat
-    tools: [search_arxiv, get_paper_detail]
-
-  - name: analyst
-    role: analyst
-    model: deepseek-chat
-    tools: [get_paper_detail]
-
-  - name: synthesizer
-    role: synthesizer
-    model: deepseek-chat
-    tools: [search_arxiv]
-
-  - name: ideator
-    role: ideator
-    model: deepseek-reasoner
-    tools: [search_arxiv]
+strategy: pipeline
+max_rounds: 5
+sequence: [searcher, analyst, chief]
+verbose: true
 ```
+
+### 添加新 Agent
+
+在 `agents/definitions/` 下新建一个 `.md` 文件即可：
+
+```markdown
+---
+name: translator
+model: deepseek-chat
+tools: []
+max_iters: 5
+---
+
+你是一个翻译专家。将用户提供的内容翻译成中文。
+```
+
+无需改任何代码，`ResearchTeam` 会自动发现新文件。
 
 ### 可用工具
 
@@ -190,36 +233,34 @@ agents:
 
 ```
 idea_creator/
-├── __init__.py              # 包入口 + research() API + .env 加载
-├── main.py                  # CLI 入口
-├── pyproject.toml           # 依赖声明
+├── __init__.py                 # 包入口 + research() API + .env 加载
+├── main.py                     # CLI 入口
+├── pyproject.toml              # 依赖声明
 ├── .env.example
-├── .gitignore
 │
-├── agents/                  # Agent 层
-│   ├── factory.py           # build_agent() 工厂
-│   ├── prompts.py           # 5 个角色的 system prompt 模板
-│   └── team.py              # ResearchTeam 容器 + 工具注册
+├── agents/                     # Agent 定义 + 运行时
+│   ├── definitions/            #   .md 文件定义每个 Agent
+│   │   ├── chief.md            #     编排者
+│   │   ├── searcher.md         #     检索专家
+│   │   ├── analyst.md          #     分析专家
+│   │   ├── synthesizer.md      #     综合专家
+│   │   └── ideator.md          #     创意专家
+│   └── team.py                 #   ResearchTeam + .md 加载器 + 工具注册
 │
-├── tools/                   # 工具层
-│   ├── arxiv.py             # search_arxiv, get_paper_detail
-│   └── utils.py             # HTTP 客户端, XML 解析, 格式化
+├── tools/                      # 工具实现层
+│   ├── arxiv.py                #   search_arxiv, get_paper_detail
+│   └── utils.py                #   HTTP 客户端, XML 解析, 格式化
 │
-├── orchestration/           # 编排层
-│   ├── base.py              # OrchestrationStrategy 抽象基类
-│   ├── autonomous.py        # Chief 驱动动态委派
-│   ├── pipeline.py          # 固定序列执行
-│   └── router.py            # DELEGATE TO 指令解析
+├── orchestration/              # 编排层
+│   ├── base.py                 #   OrchestrationStrategy 抽象基类
+│   ├── autonomous.py           #   Chief 驱动动态委派
+│   ├── pipeline.py             #   固定序列执行
+│   └── router.py               #   DELEGATE TO 指令解析
 │
-└── config/                  # 配置层
-    ├── models.py            # Pydantic 校验模型
-    ├── loader.py            # YAML 加载 + 编程式 API
-    └── presets/             # 内置预设
-        ├── quick_survey.yaml
-        └── idea_generation.yaml
+└── config/                     # 编排配置
+    ├── models.py               #   OrchestrationConfig (Pydantic)
+    └── loader.py               #   YAML 加载
 ```
-
----
 
 ## 需求
 

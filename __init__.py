@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 """Idea Creator — A harness-based research paper search, analysis, and
-idea generation system built on AgentScope.
+idea generation system built on AgentScope v2.0.
 
 Quick start:
     from idea_creator import research
 
     result = await research(
         "What are recent advances in multi-agent LLM systems?",
-        preset="quick_survey",
     )
     print(result)
 """
@@ -22,149 +21,102 @@ try:
     if _env_path.exists():
         load_dotenv(_env_path)
 except ImportError:
-    pass  # python-dotenv not installed, skip
+    pass
 
-from .agents import ResearchTeam, build_agent, get_prompt, list_roles
+from .agents import ResearchTeam
 from .orchestration import (
     AutonomousStrategy,
     PipelineStrategy,
     autonomous_strategy,
     pipeline_strategy,
 )
-from .config import (
-    ResearchModeConfig,
-    AgentSpec,
-    OrchestrationSpec,
-    load_config,
-    load_preset,
-    list_presets,
-    create_config,
-)
+from .config import OrchestrationConfig, load_orchestration_config
 
-# Lazy import for the main entry point — avoids circular deps
 __all__ = [
-    # Agents
     "ResearchTeam",
-    "build_agent",
-    "get_prompt",
-    "list_roles",
-    # Orchestration
     "AutonomousStrategy",
     "PipelineStrategy",
     "autonomous_strategy",
     "pipeline_strategy",
-    # Config
-    "ResearchModeConfig",
-    "AgentSpec",
-    "OrchestrationSpec",
-    "load_config",
-    "load_preset",
-    "list_presets",
-    "create_config",
-    # Entry point
+    "OrchestrationConfig",
+    "load_orchestration_config",
     "research",
 ]
 
 
 async def research(
     query: str,
-    preset: str = "quick_survey",
-    config_path: str | None = None,
+    agent_names: list[str] | None = None,
     api_key: str | None = None,
+    config: str | Path | OrchestrationConfig | None = None,
+    strategy: str = "autonomous",
+    max_rounds: int = 15,
     verbose: bool = True,
 ) -> str:
-    """Run a research query with a single function call.
-
-    This is the simplest programmatic API. It loads a preset (or custom config),
-    builds the team, and executes the research.
+    """Run a research query.
 
     Args:
         query: The research question or topic.
-        preset: Name of a built-in preset ("quick_survey", "idea_generation").
-            Ignored if config_path is provided.
-        config_path: Path to a custom YAML config file.
+        agent_names: Which agents to include (defaults to all in definitions/).
         api_key: DeepSeek API key. Falls back to DEEPSEEK_API_KEY env var.
-        verbose: Print agent interactions to stdout.
+        config: Optional orchestration config — a path to a YAML file, or an
+            OrchestrationConfig instance. Overrides strategy/max_rounds/verbose.
+        strategy: "autonomous" or "pipeline" (ignored if config is provided).
+        max_rounds: Max delegation rounds (ignored if config is provided).
+        verbose: Print agent interactions (ignored if config is provided).
 
     Returns:
-        The final research report / ideas as a text string.
-
-    Raises:
-        FileNotFoundError: If the preset or config_path doesn't exist.
-        ValueError: If API key is not provided and not in environment.
+        The final research report as a text string.
     """
     import os
+
+    from agentscope.message import Msg, TextBlock
 
     from .agents import ResearchTeam
     from .orchestration import autonomous_strategy, pipeline_strategy
 
-    # Resolve config
-    if config_path:
-        from .config import load_config
-
-        config = load_config(config_path)
-    else:
-        from .config import load_preset
-
-        config = load_preset(preset)
+    # Resolve orchestration config
+    if config is not None:
+        if isinstance(config, (str, Path)):
+            config = load_orchestration_config(config)
+        strategy = config.strategy
+        max_rounds = config.max_rounds
+        verbose = config.verbose
+        if config.sequence:
+            agent_names = config.sequence
 
     # Resolve API key
     if api_key is None:
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             raise ValueError(
-                "No API key provided. Set DEEPSEEK_API_KEY environment variable "
-                "or pass api_key parameter."
+                "No API key provided. Set DEEPSEEK_API_KEY in .env or "
+                "environment, or pass api_key parameter."
             )
 
-    # Build model overrides from config
-    model_overrides = config.model_defaults or {}
-    tool_overrides = {}
-    prompt_overrides = {}
-    for agent_spec in config.agents:
-        if agent_spec.model:
-            model_overrides[agent_spec.name] = agent_spec.model
-        tool_overrides[agent_spec.name] = agent_spec.tools
-        if agent_spec.system_prompt_override:
-            prompt_overrides[agent_spec.name] = agent_spec.system_prompt_override
-
-    roles = [a.name for a in config.agents]
-
-    # Resolve model class
-    from agentscope.model import DeepSeekChatModel
-
-    model_class = DeepSeekChatModel
-
-    # Build team
+    # Build team from .md definitions
     team = ResearchTeam(
         api_key=api_key,
-        model_class=model_class,
-        model_overrides=model_overrides,
-        tool_overrides=tool_overrides,
-        prompt_overrides=prompt_overrides,
-        roles=roles,
+        agent_names=agent_names,
     )
 
     # Build strategy
-    strat_spec = config.orchestration
-    if strat_spec.strategy == "pipeline" and strat_spec.sequence:
-        strategy = pipeline_strategy(
-            sequence=strat_spec.sequence,
-            verbose=strat_spec.verbose,
+    if strategy == "pipeline":
+        strat = pipeline_strategy(
+            sequence=agent_names or team.list_agents(),
+            verbose=verbose,
         )
     else:
-        strategy = autonomous_strategy(
-            max_rounds=strat_spec.max_rounds,
-            verbose=strat_spec.verbose,
+        strat = autonomous_strategy(
+            max_rounds=max_rounds,
+            verbose=verbose,
         )
 
     # Execute
-    from agentscope.message import Msg, TextBlock
-
     user_msg = Msg(
         name="user",
         content=[TextBlock(text=query)],
         role="user",
     )
-    result_msg = await strategy.execute(team, user_msg)
+    result_msg = await strat.execute(team, user_msg)
     return result_msg.get_text_content()

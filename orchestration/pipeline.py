@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pipeline orchestration strategy — fixed-sequence agent execution.
-
-This is a simpler, predictable strategy where agents are called in a fixed order.
-Useful for quick surveys or when you want deterministic behavior.
-"""
+"""Pipeline orchestration strategy — fixed-sequence agent execution."""
 
 from __future__ import annotations
 
@@ -21,17 +17,15 @@ class PipelineStrategy(OrchestrationStrategy):
     """Fixed-sequence pipeline orchestration.
 
     Agents are called one after another in a predetermined order. Each agent
-    receives the previous agent's output as its input. The final agent's
-    output is returned.
+    receives the previous agent's output as its input.
     """
 
     def __init__(self, sequence: list[str], verbose: bool = True):
         """Initialize the pipeline strategy.
 
         Args:
-            sequence: Ordered list of agent names to invoke, e.g.
-                ["searcher", "analyst", "synthesizer", "ideator", "chief"].
-            verbose: Whether to print agent interactions to stdout.
+            sequence: Ordered list of agent names to invoke.
+            verbose: Whether to print agent interactions.
         """
         self.sequence = sequence
         self.verbose = verbose
@@ -49,9 +43,6 @@ class PipelineStrategy(OrchestrationStrategy):
 
         Returns:
             The final agent's response message.
-
-        Raises:
-            KeyError: If any agent name in the sequence doesn't exist in the team.
         """
         if self.verbose:
             logger.info("=" * 60)
@@ -85,56 +76,17 @@ class PipelineStrategy(OrchestrationStrategy):
         return current_msg
 
 
-# ============================================================================
-# Preset pipeline sequences
-# ============================================================================
-
-# Quick survey: search → chief synthesizes
-QUICK_SURVEY = ["searcher", "chief"]
-
-# Standard analysis: search → analyze → chief
-STANDARD_ANALYSIS = ["searcher", "analyst", "chief"]
-
-# Deep dive: search → analyze → synthesize → chief
-DEEP_ANALYSIS = ["searcher", "analyst", "synthesizer", "chief"]
-
-# Full idea generation pipeline
-IDEA_GENERATION = ["searcher", "analyst", "synthesizer", "ideator", "chief"]
-
-
 def pipeline_strategy(
-    sequence: Optional[list[str]] = None,
-    preset: str = "quick_survey",
+    sequence: list[str],
     verbose: bool = True,
 ) -> PipelineStrategy:
     """Create a pipeline orchestration strategy.
 
     Args:
-        sequence: Custom agent sequence (overrides preset if provided).
-        preset: Preset sequence name — "quick_survey", "standard_analysis",
-            "deep_analysis", or "idea_generation".
+        sequence: Ordered list of agent names, e.g. ["searcher", "chief"].
         verbose: Print agent interactions during execution.
 
     Returns:
         Configured PipelineStrategy instance.
-
-    Raises:
-        ValueError: If the preset name is not recognized.
     """
-    presets = {
-        "quick_survey": QUICK_SURVEY,
-        "standard_analysis": STANDARD_ANALYSIS,
-        "deep_analysis": DEEP_ANALYSIS,
-        "idea_generation": IDEA_GENERATION,
-    }
-
-    if sequence is not None:
-        pass  # Use the provided sequence
-    elif preset in presets:
-        sequence = presets[preset]
-    else:
-        raise ValueError(
-            f"Unknown preset '{preset}'. Available: {list(presets.keys())}"
-        )
-
     return PipelineStrategy(sequence=sequence, verbose=verbose)

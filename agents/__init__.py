@@ -1,14 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Agent definitions, factory, and team container."""
+"""Agent definitions loader and team container."""
 
-from .factory import build_agent
-from .team import ResearchTeam
-from .prompts import get_prompt, list_roles, ROLE_PROMPTS
+from .team import ResearchTeam, load_agent_definition, load_agent_definitions
 
 __all__ = [
-    "build_agent",
     "ResearchTeam",
-    "get_prompt",
-    "list_roles",
-    "ROLE_PROMPTS",
+    "load_agent_definition",
+    "load_agent_definitions",
 ]
