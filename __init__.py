@@ -8,10 +8,21 @@ Quick start:
     result = await research(
         "What are recent advances in multi-agent LLM systems?",
         preset="quick_survey",
-        api_key="sk-...",
     )
     print(result)
 """
+
+# Load .env file before anything else
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+
+    _env_path = Path(__file__).parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path)
+except ImportError:
+    pass  # python-dotenv not installed, skip
 
 from .agents import ResearchTeam, build_agent, get_prompt, list_roles
 from .orchestration import (
