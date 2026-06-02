@@ -7,7 +7,13 @@ from typing import Optional
 
 from agentscope.agent import Agent
 from agentscope.model import ChatModelBase
-from agentscope.tool import Toolkit, FunctionTool
+from agentscope.tool import (
+    Toolkit,
+    FunctionTool,
+    ToolBase,           # ← v2.0 工具基类 (tool/_base.py)
+    TaskCreate,         # ← v2.0 内置: 创建任务 (tool/_task/_create_task.py)
+    TaskList,           # ← v2.0 内置: 列出任务 (tool/_task/_list_task.py)
+)
 
 from .factory import build_agent
 from ..tools import search_arxiv, get_paper_detail
@@ -17,28 +23,38 @@ from ..tools import search_arxiv, get_paper_detail
 # ============================================================================
 
 DEFAULT_TOOL_SETS: dict[str, list] = {
-    "chief": [],  # Chief delegates only — no tools needed
+    "chief": ["TaskCreate", "TaskList"],  # Chief 用 todolist 管理委派进度
     "searcher": ["search_arxiv", "get_paper_detail"],
     "analyst": ["get_paper_detail"],
     "synthesizer": ["search_arxiv"],
     "ideator": ["search_arxiv"],
 }
 
-# Mapping of tool names to actual functions
-TOOL_REGISTRY: dict[str, callable] = {
+# Mapping of tool names to functions OR ToolBase instances
+# - 值为 callable → 包装为 FunctionTool
+# - 值为 ToolBase → 直接使用（v2.0 内置工具类）
+TOOL_REGISTRY: dict[str, callable | ToolBase] = {
+    # 我们的自定义工具（函数 → FunctionTool）
     "search_arxiv": search_arxiv,
     "get_paper_detail": get_paper_detail,
+    # v2.0 内置工具（ToolBase 子类 → 直接实例化）
+    "TaskCreate": TaskCreate(),
+    "TaskList": TaskList(),
 }
 
 
 def _build_toolkit(tool_names: list[str]) -> Toolkit:
-    """Build a Toolkit from a list of tool function names.
+    """Build a Toolkit from a list of tool names.
+
+    支持两种工具来源:
+      - TOOL_REGISTRY 中是 callable → 包装为 FunctionTool
+      - TOOL_REGISTRY 中是 ToolBase → 直接使用
 
     Args:
         tool_names: List of tool names (must be keys in TOOL_REGISTRY).
 
     Returns:
-        A Toolkit with the requested tools registered as FunctionTool instances.
+        A Toolkit with the requested tools.
     """
     tools = []
     for name in tool_names:
@@ -46,16 +62,22 @@ def _build_toolkit(tool_names: list[str]) -> Toolkit:
             raise KeyError(
                 f"Unknown tool '{name}'. Available: {list(TOOL_REGISTRY.keys())}"
             )
-        func = TOOL_REGISTRY[name]
-        tools.append(
-            FunctionTool(
-                func=func,
-                name=name,
-                description=func.__doc__ or f"Tool: {name}",
-                is_concurrency_safe=True,
-                is_read_only=True,
+        entry = TOOL_REGISTRY[name]
+
+        if isinstance(entry, ToolBase):
+            # v2.0 内置工具类（TaskCreate/TaskList 等），直接使用
+            tools.append(entry)
+        else:
+            # 自定义函数，包装为 FunctionTool
+            tools.append(
+                FunctionTool(
+                    func=entry,
+                    name=name,
+                    description=entry.__doc__ or f"Tool: {name}",
+                    is_concurrency_safe=True,
+                    is_read_only=True,
+                )
             )
-        )
     return Toolkit(tools=tools)
 
 
