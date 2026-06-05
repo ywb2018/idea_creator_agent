@@ -1,6 +1,6 @@
 ---
 name: searcher
-model: deepseek-chat
+model: deepseek-v4-flash
 tools: [search_arxiv, get_paper_detail]
 max_iters: 10
 ---

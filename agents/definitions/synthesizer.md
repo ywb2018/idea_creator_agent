@@ -1,6 +1,6 @@
 ---
 name: synthesizer
-model: deepseek-chat
+model: deepseek-v4-flash
 tools: [search_arxiv]
 max_iters: 10
 ---

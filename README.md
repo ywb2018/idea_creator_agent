@@ -13,7 +13,6 @@ pip install agentscope httpx pyyaml pydantic python-dotenv
 ### 配置
 
 ```bash
-cp .env.example .env
 # 编辑 .env 填入 DEEPSEEK_API_KEY=sk-...
 ```
 
@@ -94,7 +93,7 @@ result = await research(
 ```markdown
 ---
 name: chief
-model: deepseek-chat
+model: deepseek-v4-flash
 tools: [TaskCreate, TaskList]
 max_iters: 15
 ---
@@ -111,7 +110,7 @@ frontmatter 字段：
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | `name` | ✅ | Agent 标识名，用于委派和 team.get_agent() |
-| `model` | ❌ | 模型名，默认 deepseek-chat |
+| `model` | ❌ | 模型名，默认 deepseek-v4-flash |
 | `tools` | ❌ | 工具列表：search_arxiv, get_paper_detail, TaskCreate, TaskList |
 | `max_iters` | ❌ | ReAct 循环最大轮数，默认 15 |
 
@@ -208,7 +207,7 @@ verbose: true
 ```markdown
 ---
 name: translator
-model: deepseek-chat
+model: deepseek-v4-flash
 tools: []
 max_iters: 5
 ---

@@ -1,6 +1,6 @@
 ---
 name: chief
-model: deepseek-chat
+model: deepseek-v4-flash
 tools: [TaskCreate, TaskList]
 max_iters: 15
 ---

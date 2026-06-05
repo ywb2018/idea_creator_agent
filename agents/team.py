@@ -97,7 +97,7 @@ def load_agent_definition(path: str | Path) -> dict:
 
     return {
         "name": meta.get("name", path.stem),
-        "model": meta.get("model", "deepseek-chat"),
+        "model": meta.get("model", "deepseek-v4-flash"),
         "tools": meta.get("tools", []),
         "max_iters": meta.get("max_iters", 15),
         "system_prompt": body,

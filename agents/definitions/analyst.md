@@ -1,6 +1,6 @@
 ---
 name: analyst
-model: deepseek-chat
+model: deepseek-v4-flash
 tools: [get_paper_detail]
 max_iters: 15
 ---
