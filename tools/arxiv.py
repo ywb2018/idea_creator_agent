@@ -169,12 +169,36 @@ async def search_arxiv(
 async def get_paper_detail(paper_id: str) -> ToolChunk:
     """Fetch the full abstract and metadata for a specific arxiv paper by its ID.
 
-    Use this tool to read a paper's complete abstract before analyzing it.
+    First checks the local papers/ directory. If the paper was already saved
+    by search_arxiv, it returns the cached data directly without calling the
+    arxiv API. Only requests arxiv if the paper is not found locally.
 
     Args:
         paper_id: Arxiv paper ID, e.g. "2402.14034" or "2402.14034v1".
     """
-    params = {"id_list": paper_id.strip(), "max_results": 1}
+    pid = paper_id.strip()
+
+    # ── 1. Try local cache first ──────────────────────────────────────
+    if _PAPERS_DIR.exists():
+        local = _PAPERS_DIR / f"{pid}.json"
+        if not local.exists():
+            # Try partial match (e.g., "2402.14034" matches "2402.14034v1.json")
+            matches = list(_PAPERS_DIR.glob(f"{pid}*.json"))
+            if matches:
+                local = matches[0]
+        if local.exists():
+            try:
+                paper = json.loads(local.read_text(encoding="utf-8"))
+                detail_text = format_paper_detail(paper)
+                return ToolChunk(
+                    content=[TextBlock(text=detail_text)],
+                    metadata={"paper": paper, "source": "local"},
+                )
+            except Exception:
+                pass  # Corrupted file, fall through to API
+
+    # ── 2. Fetch from arxiv API ───────────────────────────────────────
+    params = {"id_list": pid, "max_results": 1}
 
     async with create_http_client() as client:
         resp = await client.get(ARXIV_API, params=params)
@@ -187,7 +211,7 @@ async def get_paper_detail(paper_id: str) -> ToolChunk:
         return ToolChunk(
             content=[
                 TextBlock(
-                    text=f"Paper '{paper_id}' not found on arxiv. "
+                    text=f"Paper '{pid}' not found on arxiv or locally. "
                     f"Double-check the ID and try again."
                 )
             ],
@@ -200,7 +224,7 @@ async def get_paper_detail(paper_id: str) -> ToolChunk:
 
     return ToolChunk(
         content=[TextBlock(text=detail_text)],
-        metadata={"paper": paper},
+        metadata={"paper": paper, "source": "arxiv_api"},
     )
 
 
