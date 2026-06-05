@@ -14,6 +14,11 @@ Environment:
 
 import argparse
 import asyncio
+import sys
+from pathlib import Path
+
+# Allow running directly from project root without pip install
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 async def main_async(args: argparse.Namespace) -> None:

@@ -8,7 +8,7 @@ research until it produces a final answer.
 
 from __future__ import annotations
 
-import logging
+import sys
 from typing import Optional
 
 from agentscope.message import Msg, TextBlock
@@ -16,7 +16,10 @@ from agentscope.message import Msg, TextBlock
 from .base import OrchestrationStrategy
 from .router import parse_delegation
 
-logger = logging.getLogger(__name__)
+
+def _log(*args, **kwargs):
+    """Print verbose output immediately (unbuffered)."""
+    print(*args, **kwargs, flush=True)
 
 
 class AutonomousStrategy(OrchestrationStrategy):
@@ -62,9 +65,9 @@ class AutonomousStrategy(OrchestrationStrategy):
 
         # Kick off: send user query to Chief
         if self.verbose:
-            logger.info("=" * 60)
-            logger.info(f"Research: {user_msg.get_text_content()[:200]}")
-            logger.info("=" * 60)
+            _log("=" * 60)
+            _log(f"Research: {user_msg.get_text_content()[:200]}")
+            _log("=" * 60)
 
         result = await chief.reply(user_msg)
         self._log_round("Chief (initial)", result)
@@ -77,7 +80,7 @@ class AutonomousStrategy(OrchestrationStrategy):
             if target_name is None:
                 # No delegation → Chief is delivering final answer
                 if self.verbose:
-                    logger.info("No delegation detected. Chief is done.")
+                    _log("No delegation detected. Chief is done.")
                 break
 
             # Route to the specialist
@@ -86,7 +89,7 @@ class AutonomousStrategy(OrchestrationStrategy):
             except KeyError:
                 # Chief referenced an unknown agent — feed error back
                 if self.verbose:
-                    logger.warning(
+                    _log(
                         f"Chief delegated to unknown agent '{target_name}'. "
                         f"Available: {team.list_agents()}"
                     )
@@ -107,7 +110,7 @@ class AutonomousStrategy(OrchestrationStrategy):
 
             # Execute the specialist
             if self.verbose:
-                logger.info(
+                _log(
                     f"[Round {round_num}] Chief → {target_name} "
                     f"(task: {task[:100]}...)"
                 )
@@ -132,14 +135,14 @@ class AutonomousStrategy(OrchestrationStrategy):
         else:
             # Hit max_rounds
             if self.verbose:
-                logger.warning(
+                _log(
                     f"Hit max_rounds ({self.max_rounds}). Returning last response."
                 )
 
         if self.verbose:
-            logger.info("=" * 60)
-            logger.info("Research complete.")
-            logger.info("=" * 60)
+            _log("=" * 60)
+            _log("Research complete.")
+            _log("=" * 60)
 
         return result
 
@@ -150,7 +153,7 @@ class AutonomousStrategy(OrchestrationStrategy):
         preview = msg.get_text_content()[:300]
         if len(msg.get_text_content()) > 300:
             preview += "..."
-        logger.info(f"[{speaker}]\n{preview}\n")
+        _log(f"[{speaker}]\n{preview}\n")
 
 
 # ============================================================================

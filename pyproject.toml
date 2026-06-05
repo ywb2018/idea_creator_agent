@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A harness-based multi-agent system for research paper search, analysis, and idea generation built on AgentScope."
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [
     {name = "Idea Creator Team"},
 ]

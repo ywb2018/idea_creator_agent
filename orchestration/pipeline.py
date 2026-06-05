@@ -3,14 +3,16 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Optional
 
 from agentscope.message import Msg
 
 from .base import OrchestrationStrategy
 
-logger = logging.getLogger(__name__)
+
+def _log(*args, **kwargs):
+    """Print verbose output immediately (unbuffered)."""
+    print(*args, **kwargs, flush=True)
 
 
 class PipelineStrategy(OrchestrationStrategy):
@@ -45,10 +47,10 @@ class PipelineStrategy(OrchestrationStrategy):
             The final agent's response message.
         """
         if self.verbose:
-            logger.info("=" * 60)
-            logger.info(f"Pipeline: {' → '.join(self.sequence)}")
-            logger.info(f"Question: {user_msg.get_text_content()[:200]}")
-            logger.info("=" * 60)
+            _log("=" * 60)
+            _log(f"Pipeline: {' → '.join(self.sequence)}")
+            _log(f"Question: {user_msg.get_text_content()[:200]}")
+            _log("=" * 60)
 
         current_msg = user_msg
 
@@ -56,7 +58,7 @@ class PipelineStrategy(OrchestrationStrategy):
             agent = team.get_agent(agent_name)
 
             if self.verbose:
-                logger.info(
+                _log(
                     f"[Step {i + 1}/{len(self.sequence)}] Running {agent_name}..."
                 )
 
@@ -66,12 +68,12 @@ class PipelineStrategy(OrchestrationStrategy):
             if len(current_msg.get_text_content()) > 300:
                 preview += "..."
             if self.verbose:
-                logger.info(f"[{agent_name}]\n{preview}\n")
+                _log(f"[{agent_name}]\n{preview}\n")
 
         if self.verbose:
-            logger.info("=" * 60)
-            logger.info("Pipeline complete.")
-            logger.info("=" * 60)
+            _log("=" * 60)
+            _log("Pipeline complete.")
+            _log("=" * 60)
 
         return current_msg
 

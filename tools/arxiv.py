@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from agentscope.tool._response import ToolChunk
@@ -18,6 +22,56 @@ from .utils import (
 )
 
 ARXIV_API = "http://export.arxiv.org/api/query"
+
+# Papers output directory (relative to project root)
+_PAPERS_DIR = Path(__file__).parent.parent / "papers"
+
+
+def _save_papers(papers: list[dict], query: str = "") -> Path | None:
+    """Save paper data to local JSON files.
+
+    Each paper is saved individually as {arxiv_id}.json.
+    A search index file is also created with the full result set.
+
+    Args:
+        papers: List of paper info dicts from extract_arxiv_paper_info.
+        query: Search query string (for naming the index file).
+
+    Returns:
+        Path to the search index file, or None if save failed.
+    """
+    try:
+        _PAPERS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Save each paper individually
+        for paper in papers:
+            paper_path = _PAPERS_DIR / f"{paper['arxiv_id']}.json"
+            paper_path.write_text(
+                json.dumps(paper, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+        # Save search index
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_query = "".join(c if c.isalnum() or c in "_-" else "_" for c in query)[:50]
+        index_path = _PAPERS_DIR / f"search_{timestamp}_{safe_query}.json"
+        index_path.write_text(
+            json.dumps(
+                {
+                    "query": query,
+                    "timestamp": timestamp,
+                    "count": len(papers),
+                    "papers": [p["arxiv_id"] for p in papers],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        return index_path
+    except Exception:
+        return None
 
 
 async def search_arxiv(
@@ -72,10 +126,15 @@ async def search_arxiv(
 
     papers = [extract_arxiv_paper_info(e) for e in entries]
 
+    # Save papers to local files
+    saved_path = _save_papers(papers, query)
+
     lines = [
         f"## Arxiv Search Results for: *{query}*",
         f"Found **{len(papers)}** papers.\n",
     ]
+    if saved_path:
+        lines.append(f"📁 Papers saved to: `{_PAPERS_DIR.resolve()}`\n")
     for i, paper in enumerate(papers, 1):
         snippet = paper["summary"][:400]
         if len(paper["summary"]) > 400:
@@ -118,6 +177,7 @@ async def get_paper_detail(paper_id: str) -> ToolChunk:
         )
 
     paper = extract_arxiv_paper_info(entry)
+    _save_papers([paper], paper["arxiv_id"])
     detail_text = format_paper_detail(paper)
 
     return ToolChunk(
