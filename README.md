@@ -81,7 +81,7 @@ result = await research(
 | Agent | .md 文件 | 工具 | 职责 |
 |-------|---------|------|------|
 | **chief** | chief.md | TaskCreate, TaskList | 理解意图、委派任务、合成报告 |
-| **searcher** | searcher.md | search_arxiv, get_paper_detail | arxiv 论文检索 |
+| **searcher** | searcher.md | search_arxiv, filter_papers_by_year, remove_paper | arxiv 论文检索 + 时间过滤 + 语义筛选 |
 | **analyst** | analyst.md | get_paper_detail | 单篇论文深度批判分析 |
 | **synthesizer** | synthesizer.md | search_arxiv | 多篇论文横向综合、找空白 |
 | **ideator** | ideator.md | search_arxiv | 生成新颖研究创意 |
@@ -111,7 +111,7 @@ frontmatter 字段：
 |------|------|------|
 | `name` | ✅ | Agent 标识名，用于委派和 team.get_agent() |
 | `model` | ❌ | 模型名，默认 deepseek-v4-flash |
-| `tools` | ❌ | 工具列表：search_arxiv, get_paper_detail, TaskCreate, TaskList |
+| `tools` | ❌ | 工具列表：search_arxiv, filter_papers_by_year, remove_paper, get_paper_detail, TaskCreate, TaskList |
 | `max_iters` | ❌ | ReAct 循环最大轮数，默认 15 |
 
 body（frontmatter 之后的 markdown 正文）→ system_prompt。
@@ -221,8 +221,10 @@ max_iters: 5
 
 | 工具 | 类型 | 说明 |
 |------|------|------|
-| `search_arxiv` | FunctionTool | arxiv 关键词检索 |
-| `get_paper_detail` | FunctionTool | 获取论文完整摘要 |
+| `search_arxiv` | FunctionTool | arxiv 关键词检索，支持 year_from 参数从源头过滤年份 |
+| `get_paper_detail` | FunctionTool | 获取单篇论文完整摘要 |
+| `filter_papers_by_year` | FunctionTool | 按年份范围过滤已保存论文（兜底） |
+| `remove_paper` | FunctionTool | 删除单篇论文（由 LLM 语义判断后调用） |
 | `TaskCreate` | v2.0 内置 | 创建结构化子任务 |
 | `TaskList` | v2.0 内置 | 列出当前任务及状态 |
 
@@ -235,7 +237,7 @@ idea_creator/
 ├── __init__.py                 # 包入口 + research() API + .env 加载
 ├── main.py                     # CLI 入口
 ├── pyproject.toml              # 依赖声明
-├── .env.example
+├── .env                          # API Key 配置
 │
 ├── agents/                     # Agent 定义 + 运行时
 │   ├── definitions/            #   .md 文件定义每个 Agent
@@ -247,7 +249,7 @@ idea_creator/
 │   └── team.py                 #   ResearchTeam + .md 加载器 + 工具注册
 │
 ├── tools/                      # 工具实现层
-│   ├── arxiv.py                #   search_arxiv, get_paper_detail
+│   ├── arxiv.py                #   search_arxiv, get_paper_detail, filter_*, remove_paper
 │   └── utils.py                #   HTTP 客户端, XML 解析, 格式化
 │
 ├── orchestration/              # 编排层
@@ -256,14 +258,27 @@ idea_creator/
 │   ├── pipeline.py             #   固定序列执行
 │   └── router.py               #   DELEGATE TO 指令解析
 │
+├── papers/                      # 搜索到的论文 JSON（自动生成）
+├── reports/                     # 最终研究报告 Markdown（自动生成）
+│
 └── config/                     # 编排配置
     ├── models.py               #   OrchestrationConfig (Pydantic)
     └── loader.py               #   YAML 加载
 ```
 
+### 论文过滤流水线
+
+searcher 采用三层过滤确保只保留相关的最新论文：
+
+```
+search_arxiv(year_from=2025)    ← ① 源头：年份过滤，旧论文不落盘
+  └─ filter_papers_by_year()    ← ② 兜底：年份二次检查
+       └─ remove_paper(id)       ← ③ LLM 语义判断：不相关就删
+```
+
 ## 需求
 
-- Python >= 3.11
+- Python >= 3.10
 - AgentScope >= 2.0
 - DeepSeek API Key
 

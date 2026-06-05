@@ -18,9 +18,9 @@ from typing import Optional
 # ============================================================================
 
 # Matches: DELEGATE TO <name>: followed by content until the next
-# DELEGATE TO or end of string.
+# DELEGATE TO or end of string. Handles markdown bold/italic around name.
 _DELEGATION_RE = re.compile(
-    r"DELEGATE\s+TO\s+(\w+)\s*:\s*\n?(.*?)(?=\s*DELEGATE\s+TO\s|\Z)",
+    r"DELEGATE\s+TO\s+\*{0,2}(\w+)\*{0,2}\s*:\s*\n?(.*?)(?=\s*DELEGATE\s+TO\s|\Z)",
     re.DOTALL | re.IGNORECASE,
 )
 

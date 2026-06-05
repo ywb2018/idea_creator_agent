@@ -36,6 +36,7 @@ build/
 
 # Saved research papers
 papers/
+reports/
 .env.local
 .env.*.local
 

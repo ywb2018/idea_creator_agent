@@ -13,6 +13,8 @@ import yaml
 from agentscope.agent import Agent, ReActConfig
 from agentscope.credential import DeepSeekCredential
 from agentscope.model import DeepSeekChatModel
+from agentscope.permission import PermissionContext, PermissionMode
+from agentscope.state import AgentState
 from agentscope.tool import (
     Toolkit,
     FunctionTool,
@@ -21,7 +23,7 @@ from agentscope.tool import (
     TaskList,
 )
 
-from ..tools import search_arxiv, get_paper_detail
+from ..tools import search_arxiv, get_paper_detail, filter_papers_by_year, remove_paper
 
 
 # ============================================================================
@@ -31,6 +33,8 @@ from ..tools import search_arxiv, get_paper_detail
 TOOL_REGISTRY: dict[str, callable | ToolBase] = {
     "search_arxiv": search_arxiv,
     "get_paper_detail": get_paper_detail,
+    "filter_papers_by_year": filter_papers_by_year,
+    "remove_paper": remove_paper,
     "TaskCreate": TaskCreate(),
     "TaskList": TaskList(),
 }
@@ -218,12 +222,20 @@ class ResearchTeam:
             # Build toolkit
             toolkit = _build_toolkit(tool_names)
 
+            # Agent state with BYPASS permission — auto-allow all tool calls
+            state = AgentState(
+                permission_context=PermissionContext(
+                    mode=PermissionMode.BYPASS,
+                ),
+            )
+
             # Build agent
             self.agents[name] = Agent(
                 name=name,
                 system_prompt=system_prompt,
                 model=model,
                 toolkit=toolkit,
+                state=state,
                 react_config=ReActConfig(max_iters=max_iters),
             )
 

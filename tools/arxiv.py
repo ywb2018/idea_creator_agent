@@ -70,7 +70,8 @@ def _save_papers(papers: list[dict], query: str = "") -> Path | None:
         )
 
         return index_path
-    except Exception:
+    except Exception as e:
+        print(f"[arxiv] ⚠️ 保存论文失败: {e}", flush=True)
         return None
 
 
@@ -78,6 +79,7 @@ async def search_arxiv(
     query: str,
     max_results: int = 5,
     sort_by: str = "relevance",
+    year_from: int = 0,
 ) -> ToolChunk:
     """Search for papers on arxiv by keyword or topic.
 
@@ -85,9 +87,12 @@ async def search_arxiv(
     Returns paper titles, authors, abstract snippets, arxiv IDs, and PDF links.
 
     Args:
-        query: Search keywords, e.g. "large language model agents".
+        query: Search keywords, e.g. "large language model agents 2025".
         max_results: Number of papers to return (1-10, default 5).
         sort_by: Sort order — "relevance" or "lastUpdatedDate".
+        year_from: Minimum publication year. Papers older than this are
+            discarded BEFORE saving. 0 = no filter. Set this to ensure
+            only recent papers are kept, e.g. year_from=2025.
     """
     if max_results < 1 or max_results > 10:
         return ToolChunk(
@@ -124,15 +129,28 @@ async def search_arxiv(
             ],
         )
 
-    papers = [extract_arxiv_paper_info(e) for e in entries]
+    all_papers = [extract_arxiv_paper_info(e) for e in entries]
 
-    # Save papers to local files
+    # Filter by year BEFORE saving — old papers never touch disk
+    if year_from > 0:
+        papers = [p for p in all_papers if _parse_pub_year(p) >= year_from]
+        dropped = len(all_papers) - len(papers)
+    else:
+        papers = all_papers
+        dropped = 0
+
+    # Save only filtered papers
     saved_path = _save_papers(papers, query)
 
     lines = [
         f"## Arxiv Search Results for: *{query}*",
-        f"Found **{len(papers)}** papers.\n",
+        f"Found **{len(all_papers)}** papers.",
     ]
+    if year_from > 0:
+        lines.append(f"Year filter (≥{year_from}): **{len(papers)}** kept, "
+                     f"**{dropped}** discarded before saving.\n")
+    else:
+        lines.append("")
     if saved_path:
         lines.append(f"📁 Papers saved to: `{_PAPERS_DIR.resolve()}`\n")
     for i, paper in enumerate(papers, 1):
@@ -184,3 +202,128 @@ async def get_paper_detail(paper_id: str) -> ToolChunk:
         content=[TextBlock(text=detail_text)],
         metadata={"paper": paper},
     )
+
+
+def _parse_pub_year(paper: dict) -> int:
+    """Extract publication year from a paper dict."""
+    return int(paper.get("published", "0")[:4])
+
+
+async def filter_papers_by_year(year_from: int = 0, year_to: int = 9999,
+                                 years: str = "") -> ToolChunk:
+    """Filter saved papers by publication year. Supports three modes:
+
+    - Range: set year_from and/or year_to (e.g. year_from=2024, year_to=2026)
+    - Exact years: pass a comma-separated years string (e.g. years="2022,2024,2026")
+    - Both: combine range with specific years (e.g. year_from=2023, years="2025")
+
+    Papers not matching the filter are permanently deleted from disk.
+
+    Args:
+        year_from: Minimum publication year (inclusive). 0 = no lower bound.
+        year_to: Maximum publication year (inclusive). 9999 = no upper bound.
+        years: Comma-separated specific years to also keep, e.g. "2022,2024".
+               Papers matching any of these years are kept regardless of range.
+    """
+    if not _PAPERS_DIR.exists():
+        return ToolChunk(
+            content=[TextBlock(text="No papers directory found. Run search_arxiv first.")],
+        )
+
+    # Parse specific years
+    specific_years: set[int] = set()
+    for part in years.replace(" ", "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            specific_years.add(int(part))
+
+    kept: list[dict] = []
+    removed: list[str] = []
+
+    for paper_file in sorted(_PAPERS_DIR.glob("*.json")):
+        if paper_file.name.startswith("search_"):
+            continue
+        try:
+            paper = json.loads(paper_file.read_text(encoding="utf-8"))
+            pub_year = _parse_pub_year(paper)
+            info = f"{paper['arxiv_id']} ({paper.get('published', '?')[:10]})"
+
+            in_range = year_from <= pub_year <= year_to
+            in_specific = pub_year in specific_years
+
+            if in_range or in_specific:
+                kept.append(paper)
+            else:
+                paper_file.unlink()
+                removed.append(info)
+        except Exception:
+            continue
+
+    # Build readable description of the filter
+    conditions: list[str] = []
+    if year_from > 0 and year_to < 9999:
+        conditions.append(f"{year_from}-{year_to}年")
+    elif year_from > 0:
+        conditions.append(f"{year_from}年及之后")
+    elif year_to < 9999:
+        conditions.append(f"{year_to}年及之前")
+    if specific_years:
+        conditions.append(f"特别保留 {sorted(specific_years)} 年")
+    desc = " + ".join(conditions) if conditions else "无过滤"
+
+    lines = [
+        f"## 论文时间过滤: {desc}",
+        f"- ✅ 保留: **{len(kept)}** 篇",
+        f"- 🗑 删除: **{len(removed)}** 篇",
+    ]
+    if removed:
+        lines.append("\n已删除:")
+        for r in removed:
+            lines.append(f"  - `{r}`")
+    if kept:
+        lines.append(f"\n保留:")
+        for p in kept:
+            lines.append(f"  - `{p['arxiv_id']}` ({_parse_pub_year(p)}年) — {p['title'][:70]}")
+    return ToolChunk(content=[TextBlock(text="\n".join(lines))])
+
+
+async def remove_paper(paper_id: str) -> ToolChunk:
+    """Delete a single irrelevant paper from disk.
+
+    Use this after reviewing a paper's title and abstract to remove it if it
+    does not relate to the research topic.  Relevance is judged by YOU (the
+    LLM) — read the paper's title and abstract, compare against the user's
+    research question, and call this tool to delete the paper if it is
+    unrelated.
+
+    Args:
+        paper_id: Arxiv paper ID, e.g. "2402.14034" or "2402.14034v1".
+    """
+    if not _PAPERS_DIR.exists():
+        return ToolChunk(
+            content=[TextBlock(text="No papers directory. Nothing to remove.")],
+        )
+
+    target = _PAPERS_DIR / f"{paper_id}.json"
+    if not target.exists():
+        # Try partial match
+        matches = list(_PAPERS_DIR.glob(f"{paper_id}*.json"))
+        if matches:
+            target = matches[0]
+        else:
+            return ToolChunk(
+                content=[TextBlock(text=f"Paper '{paper_id}' not found on disk.")],
+            )
+
+    try:
+        paper = json.loads(target.read_text(encoding="utf-8"))
+        title = paper.get("title", "?")[:80]
+        target.unlink()
+        return ToolChunk(
+            content=[TextBlock(text=f"🗑 已删除: `{paper_id}` — {title}")],
+        )
+    except Exception as e:
+        return ToolChunk(
+            content=[TextBlock(text=f"删除失败: {e}")],
+            state="error",
+        )

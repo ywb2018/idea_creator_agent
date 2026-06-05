@@ -9,8 +9,18 @@ research until it produces a final answer.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from typing import Optional
 
+from agentscope.agent import Agent
+from agentscope.event import (
+    ExceedMaxItersEvent,
+    RequireUserConfirmEvent,
+    RequireExternalExecutionEvent,
+    ThinkingBlockStartEvent,
+    ToolCallStartEvent,
+    ToolCallEndEvent,
+)
 from agentscope.message import Msg, TextBlock
 
 from .base import OrchestrationStrategy
@@ -20,6 +30,45 @@ from .router import parse_delegation
 def _log(*args, **kwargs):
     """Print verbose output immediately (unbuffered)."""
     print(*args, **kwargs, flush=True)
+
+
+async def _run_agent(agent: Agent, inputs: Msg, tag: str) -> Msg:
+    """Run an agent and log its internal events (tool calls, thinking, etc.).
+
+    This gives visibility into the agent's ReAct loop — showing which tools
+    are called, when the agent is thinking, and if it hits iteration limits.
+
+    Args:
+        agent: The AgentScope agent to run.
+        inputs: The input message.
+        tag: Log prefix tag (e.g. "searcher", "chief").
+
+    Returns:
+        The agent's final reply Msg.
+    """
+    final_msg: Msg | None = None
+    tool_names: dict[str, str] = {}  # tool_call_id → name
+    async for evt in agent._reply(inputs=inputs):
+        if isinstance(evt, ToolCallStartEvent):
+            tool_names[evt.tool_call_id] = evt.tool_call_name
+            _log(f"[{tag}] 🔧 调用工具: {evt.tool_call_name}")
+        elif isinstance(evt, ToolCallEndEvent):
+            name = tool_names.get(evt.tool_call_id, "?")
+            _log(f"[{tag}] 🔧 工具返回: {name}")
+        elif isinstance(evt, ThinkingBlockStartEvent):
+            _log(f"[{tag}] 💭 思考中...")
+        elif isinstance(evt, ExceedMaxItersEvent):
+            _log(f"[{tag}] ⚠️ 达到最大迭代次数! (agent: {evt.name})")
+        elif isinstance(evt, RequireUserConfirmEvent):
+            _log(f"[{tag}] ❌ 权限: 工具调用需要用户确认 — 不应该出现!")
+        elif isinstance(evt, RequireExternalExecutionEvent):
+            _log(f"[{tag}] ❌ 权限: 工具调用需要外部执行 — 不应该出现!")
+        elif isinstance(evt, Msg):
+            final_msg = evt
+    if final_msg is None:
+        # Fallback: shouldn't happen but handle gracefully
+        return Msg(name=agent.name, content=[TextBlock(text="")], role="assistant")
+    return final_msg
 
 
 class AutonomousStrategy(OrchestrationStrategy):
@@ -63,14 +112,27 @@ class AutonomousStrategy(OrchestrationStrategy):
         """
         chief = team.chief
 
+        # Prepend current timestamp so agents search for recent papers
+        now = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+        timestamped_text = (
+            f"【当前时间: {now}】请基于这个时间进行搜索，优先查找近期的论文和进展。"
+            f"\n\n{user_msg.get_text_content()}"
+        )
+        user_msg = Msg(
+            name="user",
+            content=[TextBlock(text=timestamped_text)],
+            role="user",
+        )
+
         # Kick off: send user query to Chief
         if self.verbose:
-            _log("=" * 60)
-            _log(f"Research: {user_msg.get_text_content()[:200]}")
-            _log("=" * 60)
+            _log("┌" + "─" * 58)
+            _log(f"│ 🕐 {now}")
+            _log(f"│ 📋 用户提问: {user_msg.get_text_content()[len(timestamped_text)-len(user_msg.get_text_content()):][:100]}")
+            _log("└" + "─" * 58)
 
-        result = await chief.reply(user_msg)
-        self._log_round("Chief (initial)", result)
+        result = await _run_agent(chief, user_msg, "chief")
+        self._log_round("chief", result)
 
         for round_num in range(1, self.max_rounds + 1):
             # Check for delegation directive
@@ -80,7 +142,7 @@ class AutonomousStrategy(OrchestrationStrategy):
             if target_name is None:
                 # No delegation → Chief is delivering final answer
                 if self.verbose:
-                    _log("No delegation detected. Chief is done.")
+                    _log(f"[chief] ✅ 完成，输出最终报告")
                 break
 
             # Route to the specialist
@@ -90,8 +152,8 @@ class AutonomousStrategy(OrchestrationStrategy):
                 # Chief referenced an unknown agent — feed error back
                 if self.verbose:
                     _log(
-                        f"Chief delegated to unknown agent '{target_name}'. "
-                        f"Available: {team.list_agents()}"
+                        f"[chief] ⚠️ 委派给未知 agent '{target_name}'，"
+                        f"可用: {team.list_agents()}"
                     )
                 error_msg = Msg(
                     name="system",
@@ -105,22 +167,22 @@ class AutonomousStrategy(OrchestrationStrategy):
                     ],
                     role="user",
                 )
-                result = await chief.reply(error_msg)
+                result = await _run_agent(chief, error_msg, "chief")
                 continue
 
             # Execute the specialist
             if self.verbose:
-                _log(
-                    f"[Round {round_num}] Chief → {target_name} "
-                    f"(task: {task[:100]}...)"
-                )
+                _log(f"[chief → {target_name}] 📤 委派任务 (round {round_num}): "
+                     f"{task[:120]}")
 
+            # Inject current time so searcher knows which years to filter for
+            time_ctx = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
             specialist_msg = Msg(
                 name="chief",
-                content=[TextBlock(text=task)],
+                content=[TextBlock(text=f"【当前时间: {time_ctx}】搜论文和过滤年份时请基于这个时间。\n\n{task}")],
                 role="user",
             )
-            specialist_result = await specialist.reply(specialist_msg)
+            specialist_result = await _run_agent(specialist, specialist_msg, target_name)
             self._log_round(target_name, specialist_result)
 
             # Feed specialist result back to Chief
@@ -129,31 +191,42 @@ class AutonomousStrategy(OrchestrationStrategy):
                 content=specialist_result.content,
                 role="user",
             )
-            result = await chief.reply(chief_msg)
-            self._log_round(f"Chief (round {round_num})", result)
+            result = await _run_agent(chief, chief_msg, "chief")
+            self._log_round("chief", result)
 
         else:
             # Hit max_rounds
             if self.verbose:
-                _log(
-                    f"Hit max_rounds ({self.max_rounds}). Returning last response."
-                )
+                _log(f"[chief] ⚠️ 达到最大轮次 ({self.max_rounds})，返回最后结果")
 
         if self.verbose:
-            _log("=" * 60)
-            _log("Research complete.")
-            _log("=" * 60)
+            _log("")
+            _log(f"[chief] 🏁 研究完成 — 最终报告:")
+            _log("─" * 60)
 
         return result
 
     def _log_round(self, speaker: str, msg: Msg):
-        """Log agent output if verbose mode is on."""
+        """Log agent output, prefixing every line with the agent tag.
+
+        Task-related lines (containing 📋 or checkbox markers) get a distinct
+        visual prefix so they stand out from regular agent output.
+        """
         if not self.verbose:
             return
-        preview = msg.get_text_content()[:300]
-        if len(msg.get_text_content()) > 300:
-            preview += "..."
-        _log(f"[{speaker}]\n{preview}\n")
+        text = msg.get_text_content()
+        lines = text.split("\n")
+        # Show up to 20 lines per round to avoid flooding
+        shown = lines[:20]
+        if len(lines) > 20:
+            shown.append(f"... (省略 {len(lines) - 20} 行)")
+        for line in shown:
+            # Task list lines get a special 🗂️ prefix
+            if any(marker in line for marker in ("📋", "[✓]", "[ ]", "[→]", "Task", "✅")):
+                _log(f"[{speaker}] 🗂️  {line}")
+            else:
+                _log(f"[{speaker}] {line}")
+        _log("")  # blank line separator
 
 
 # ============================================================================

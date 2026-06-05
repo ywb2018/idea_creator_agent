@@ -12,6 +12,7 @@ Quick start:
 """
 
 # Load .env file before anything else
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -119,4 +120,16 @@ async def research(
         role="user",
     )
     result_msg = await strat.execute(team, user_msg)
-    return result_msg.get_text_content()
+    text = result_msg.get_text_content()
+
+    # Save final report to reports/ directory
+    report_dir = Path(__file__).parent / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_query = "".join(c if c.isalnum() or c in "_-" else "_" for c in query)[:40]
+    report_path = report_dir / f"report_{timestamp}_{safe_query}.md"
+    report_path.write_text(text, encoding="utf-8")
+    if verbose:
+        print(f"\n📄 报告已保存: {report_path.resolve()}", flush=True)
+
+    return text
